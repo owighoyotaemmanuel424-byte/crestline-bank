@@ -6,6 +6,8 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import pg from "pg";
 import argon2 from "argon2";
+import nodemailer from "nodemailer";
+import { createOpaqueToken, digestToken, actionTokenExpiry } from "./auth-tokens.js";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -14,6 +16,12 @@ const envSchema = z.object({
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+  APP_BASE_URL: z.string().url().default("http://localhost:5173"),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().email().optional(),
 });
 const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
@@ -30,6 +38,36 @@ const pool = new Pool({
   connectionTimeoutMillis: 5_000,
 });
 pool.on("error", (error) => console.error("Unexpected idle PostgreSQL client error:", error.message));
+
+const mailer = env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.SMTP_FROM
+  ? nodemailer.createTransport({ host: env.SMTP_HOST, port: env.SMTP_PORT, secure: env.SMTP_PORT === 465, auth: { user: env.SMTP_USER, pass: env.SMTP_PASS } })
+  : null;
+
+async function issueActionToken(userId, purpose) {
+  const token = createOpaqueToken();
+  await pool.query(
+    "UPDATE auth_action_tokens SET consumed_at = now() WHERE user_id = $1 AND purpose = $2 AND consumed_at IS NULL",
+    [userId, purpose],
+  );
+  await pool.query(
+    "INSERT INTO auth_action_tokens (user_id, purpose, token_hash, expires_at) VALUES ($1, $2, $3, $4)",
+    [userId, purpose, digestToken(token), actionTokenExpiry(Date.now(), purpose === "verify_email" ? 24 * 60 * 60 * 1000 : 30 * 60 * 1000)],
+  );
+  return token;
+}
+async function sendActionEmail(email, purpose, token) {
+  if (!mailer) return false;
+  const verify = purpose === "verify_email";
+  const link = new URL(verify ? "/verify-email" : "/reset-password", env.APP_BASE_URL);
+  link.searchParams.set("token", token);
+  await mailer.sendMail({
+    from: env.SMTP_FROM,
+    to: email,
+    subject: verify ? "Verify your Crestline Capital email" : "Reset your Crestline Capital password",
+    text: verify ? `Verify your email by opening: ${link.href}\nThis link expires in 24 hours.` : `Reset your password by opening: ${link.href}\nThis link expires in 30 minutes. If you did not request this, ignore this email.`,
+  });
+  return true;
+}
 
 const app = express();
 app.disable("x-powered-by");
@@ -174,6 +212,85 @@ app.post("/api/auth/login", authLimiter, async (request, response, next) => {
     );
     return response.status(200).json({ user: publicUser(user), csrfToken });
   } catch (error) { return next(error); }
+});
+
+
+app.post("/api/auth/verify-email", authLimiter, async (request, response, next) => {
+  const token = z.string().min(32).max(128).safeParse(request.body?.token);
+  if (!token.success) return response.status(400).json({ error: { code: "INVALID_TOKEN", message: "A valid verification token is required." } });
+  const client = await pool.connect().catch(next);
+  if (!client) return;
+  try {
+    await client.query("BEGIN");
+    const found = await client.query(
+      "SELECT id, user_id FROM auth_action_tokens WHERE token_hash = $1 AND purpose = 'verify_email' AND consumed_at IS NULL AND expires_at > now() FOR UPDATE",
+      [digestToken(token.data)],
+    );
+    if (!found.rowCount) {
+      await client.query("ROLLBACK");
+      return response.status(400).json({ error: { code: "TOKEN_INVALID_OR_EXPIRED", message: "This verification link is invalid or expired. Request a new one." } });
+    }
+    await client.query("UPDATE app_users SET email_verified_at = now(), updated_at = now() WHERE id = $1", [found.rows[0].user_id]);
+    await client.query("UPDATE auth_action_tokens SET consumed_at = now() WHERE id = $1", [found.rows[0].id]);
+    await client.query("UPDATE auth_sessions SET expires_at = now() WHERE user_id = $1", [found.rows[0].user_id]);
+    await client.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.email_verified', 'user', $1::text)", [found.rows[0].user_id]);
+    await client.query("COMMIT");
+    clearSessionCookie(response);
+    return response.status(200).json({ status: "email_verified", message: "Email verified. You can now sign in." });
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); return next(error); }
+  finally { client.release(); }
+});
+
+app.post("/api/auth/resend-verification", requireSession, requireCsrf, authLimiter, async (request, response, next) => {
+  try {
+    const user = await pool.query("SELECT id, email, email_verified_at FROM app_users WHERE id = $1", [request.auth.id]);
+    if (!user.rowCount || user.rows[0].email_verified_at) return response.status(200).json({ status: "ok", message: "If verification is required, an email will be sent." });
+    if (!mailer) return response.status(503).json({ error: { code: "EMAIL_UNAVAILABLE", message: "Email delivery is not configured." } });
+    const token = await issueActionToken(user.rows[0].id, "verify_email");
+    await sendActionEmail(user.rows[0].email, "verify_email", token);
+    return response.status(200).json({ status: "ok", message: "A verification email has been sent." });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/password/forgot", authLimiter, async (request, response, next) => {
+  const email = z.string().trim().email().max(254).safeParse(request.body?.email);
+  if (!email.success) return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Provide a valid email address." } });
+  try {
+    const found = await pool.query("SELECT id, email FROM app_users WHERE lower(email) = $1", [email.data.toLowerCase()]);
+    if (found.rowCount && mailer) {
+      const token = await issueActionToken(found.rows[0].id, "reset_password");
+      await sendActionEmail(found.rows[0].email, "reset_password", token);
+    }
+    return response.status(200).json({ message: "If an account exists for that email, password reset instructions will be sent." });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/password/reset", authLimiter, async (request, response, next) => {
+  const input = z.object({ token: z.string().min(32).max(128), password: z.string().min(12).max(128) }).safeParse(request.body);
+  if (!input.success) return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Provide a valid reset token and a password of at least 12 characters." } });
+  const client = await pool.connect().catch(next);
+  if (!client) return;
+  try {
+    await client.query("BEGIN");
+    const found = await client.query(
+      "SELECT id, user_id FROM auth_action_tokens WHERE token_hash = $1 AND purpose = 'reset_password' AND consumed_at IS NULL AND expires_at > now() FOR UPDATE",
+      [digestToken(input.data.token)],
+    );
+    if (!found.rowCount) {
+      await client.query("ROLLBACK");
+      return response.status(400).json({ error: { code: "TOKEN_INVALID_OR_EXPIRED", message: "This reset link is invalid or expired. Request another." } });
+    }
+    const passwordHash = await argon2.hash(input.data.password, { type: argon2.argon2id });
+    const userId = found.rows[0].user_id;
+    await client.query("UPDATE app_users SET password_hash = $1, updated_at = now() WHERE id = $2", [passwordHash, userId]);
+    await client.query("UPDATE auth_action_tokens SET consumed_at = now() WHERE user_id = $1 AND purpose = 'reset_password' AND consumed_at IS NULL", [userId]);
+    await client.query("UPDATE auth_sessions SET expires_at = now() WHERE user_id = $1", [userId]);
+    await client.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.password_reset', 'user', $1::text)", [userId]);
+    await client.query("COMMIT");
+    clearSessionCookie(response);
+    return response.status(200).json({ status: "password_reset", message: "Password updated. Sign in with your new password." });
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); return next(error); }
+  finally { client.release(); }
 });
 
 app.get("/api/auth/me", requireSession, (request, response) => {
