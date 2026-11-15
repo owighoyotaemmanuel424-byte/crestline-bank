@@ -144,7 +144,7 @@ app.post("/api/auth/register", authLimiter, async (request, response, next) => {
     const user = inserted.rows[0];
     await client.query("INSERT INTO customer_profiles (user_id) VALUES ($1)", [user.id]);
     await client.query(
-      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.registered', 'user', $1)",
+      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.registered', 'user', $1::text)",
       [user.id],
     );
     await client.query("COMMIT");
@@ -169,7 +169,7 @@ app.post("/api/auth/login", authLimiter, async (request, response, next) => {
     if (!valid) return response.status(401).json({ error: { code: "INVALID_CREDENTIALS", message: "Invalid email or password" } });
     const csrfToken = await createSession(user.id, request, response);
     await pool.query(
-      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.login', 'user', $1)",
+      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.login', 'user', $1::text)",
       [user.id],
     );
     return response.status(200).json({ user: publicUser(user), csrfToken });
