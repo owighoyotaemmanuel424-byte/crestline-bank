@@ -1,6 +1,6 @@
 {
   "name": "crestline-capital",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "api": "node server/index.js",
-    "check:api": "node --check server/index.js"
+    "check:api": "node --check server/index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -23,6 +24,7 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
     "helmet": "^8.1.0",
+    "nodemailer": "^7.0.10",
     "pg": "^8.16.3",
     "zod": "^4.1.12"
   }
