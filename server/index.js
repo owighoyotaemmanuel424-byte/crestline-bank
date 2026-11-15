@@ -97,7 +97,7 @@ const credentialsSchema = z.object({
   email: z.string().trim().email().max(254),
   password: z.string().min(12).max(128),
 });
-const loginSchema = credentialsSchema.extend({ totp: z.string().regex(/^\\d{6}$/).optional() });
+const loginSchema = credentialsSchema.extend({ totp: z.string().regex(/^\d{6}$/).optional() });
 const cookieName = "crestline_session";
 const sessionTtlMs = env.SESSION_TTL_HOURS * 60 * 60 * 1000;
 const hashToken = (value) => createHash("sha256").update(value).digest("hex");
