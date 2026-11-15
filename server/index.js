@@ -264,8 +264,10 @@ app.post("/api/auth/verification/request", authLimiter, async (request, response
   try {
     const found = await pool.query("SELECT id, email, email_verified_at FROM app_users WHERE lower(email) = $1", [email.data.toLowerCase()]);
     if (found.rowCount && !found.rows[0].email_verified_at && mailer) {
-      const token = await issueActionToken(found.rows[0].id, "verify_email");
-      await sendActionEmail(found.rows[0].email, "verify_email", token);
+      try {
+        const token = await issueActionToken(found.rows[0].id, "verify_email");
+        await sendActionEmail(found.rows[0].email, "verify_email", token);
+      } catch (mailError) { console.error("Verification resend failed:", mailError.message); }
     }
     return response.status(200).json({ message: "If the address requires verification, instructions will be sent." });
   } catch (error) { next(error); }
@@ -288,8 +290,10 @@ app.post("/api/auth/password/forgot", authLimiter, async (request, response, nex
   try {
     const found = await pool.query("SELECT id, email FROM app_users WHERE lower(email) = $1", [email.data.toLowerCase()]);
     if (found.rowCount && mailer) {
-      const token = await issueActionToken(found.rows[0].id, "reset_password");
-      await sendActionEmail(found.rows[0].email, "reset_password", token);
+      try {
+        const token = await issueActionToken(found.rows[0].id, "reset_password");
+        await sendActionEmail(found.rows[0].email, "reset_password", token);
+      } catch (mailError) { console.error("Password reset email delivery failed:", mailError.message); }
     }
     return response.status(200).json({ message: "If an account exists for that email, password reset instructions will be sent." });
   } catch (error) { next(error); }
