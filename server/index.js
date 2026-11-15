@@ -191,13 +191,12 @@ app.post("/api/auth/register", authLimiter, async (request, response, next) => {
       [user.id],
     );
     await client.query("COMMIT");
-    const csrfToken = await createSession(user.id, request, response);
     let verificationSent = false;
     if (mailer) {
       try { const token = await issueActionToken(user.id, "verify_email"); await sendActionEmail(user.email, "verify_email", token); verificationSent = true; }
       catch (mailError) { console.error("Verification email delivery failed:", mailError.message); }
     }
-    return response.status(201).json({ user: publicUser(user), csrfToken, notice: verificationSent ? "Account created. Check your email to verify your address." : "Account created, but email delivery is not configured. An administrator must configure SMTP before this account can sign in." });
+    return response.status(201).json({ user: publicUser(user), notice: verificationSent ? "Account created. Check your email to verify your address." : "Account created, but email delivery is not configured. An administrator must configure SMTP before this account can sign in." });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     return next(error);
