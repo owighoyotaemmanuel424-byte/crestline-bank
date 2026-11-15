@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 );
 CREATE INDEX IF NOT EXISTS ledger_entries_transaction_idx ON ledger_entries(transaction_id);
 CREATE INDEX IF NOT EXISTS ledger_entries_account_created_idx ON ledger_entries(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ledger_transactions_status_posted_idx ON ledger_transactions(status, posted_at DESC);
 
 CREATE OR REPLACE FUNCTION assert_ledger_transaction_balanced()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
