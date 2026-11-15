@@ -367,7 +367,7 @@ app.post("/api/auth/mfa/disable", requireSession, requireCsrf, async (request, r
     return response.status(200).json({ status: "mfa_disabled" });
   } catch (error) { next(error); }
 });
-\n
+
 const uuidSchema = z.string().uuid();
 const pageSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
