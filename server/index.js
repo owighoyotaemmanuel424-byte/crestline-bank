@@ -257,6 +257,20 @@ app.post("/api/auth/verify-email", authLimiter, async (request, response, next) 
   finally { client.release(); }
 });
 
+
+app.post("/api/auth/verification/request", authLimiter, async (request, response, next) => {
+  const email = z.string().trim().email().max(254).safeParse(request.body?.email);
+  if (!email.success) return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Provide a valid email address." } });
+  try {
+    const found = await pool.query("SELECT id, email, email_verified_at FROM app_users WHERE lower(email) = $1", [email.data.toLowerCase()]);
+    if (found.rowCount && !found.rows[0].email_verified_at && mailer) {
+      const token = await issueActionToken(found.rows[0].id, "verify_email");
+      await sendActionEmail(found.rows[0].email, "verify_email", token);
+    }
+    return response.status(200).json({ message: "If the address requires verification, instructions will be sent." });
+  } catch (error) { next(error); }
+});
+
 app.post("/api/auth/resend-verification", requireSession, requireCsrf, authLimiter, async (request, response, next) => {
   try {
     const user = await pool.query("SELECT id, email, email_verified_at FROM app_users WHERE id = $1", [request.auth.id]);
