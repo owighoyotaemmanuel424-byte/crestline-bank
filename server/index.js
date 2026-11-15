@@ -367,7 +367,79 @@ app.post("/api/auth/mfa/disable", requireSession, requireCsrf, async (request, r
     return response.status(200).json({ status: "mfa_disabled" });
   } catch (error) { next(error); }
 });
-\napp.get("/api/auth/me", requireSession, (request, response) => {
+\n
+const uuidSchema = z.string().uuid();
+const pageSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).max(10_000).default(0),
+});
+
+// Account data is always scoped to the authenticated owner. Balances are
+// derived from posted ledger entries; no mutable balance column is trusted.
+app.get("/api/accounts", requireSession, async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT a.id, a.currency, a.status, a.created_at,
+              COALESCE(SUM(CASE WHEN le.side = 'credit' THEN le.amount_minor
+                                WHEN le.side = 'debit' THEN -le.amount_minor
+                                ELSE 0 END), 0)::text AS balance_minor
+       FROM bank_accounts a
+       LEFT JOIN ledger_entries le ON le.account_id = a.id
+       LEFT JOIN ledger_transactions lt ON lt.id = le.transaction_id AND lt.status = 'posted'
+       WHERE a.owner_user_id = $1
+       GROUP BY a.id
+       ORDER BY a.created_at ASC`,
+      [request.auth.id],
+    );
+    return response.status(200).json({
+      accounts: result.rows.map((row) => ({
+        id: row.id,
+        currency: row.currency,
+        status: row.status,
+        balanceMinor: row.balance_minor,
+        createdAt: row.created_at,
+      })),
+    });
+  } catch (error) { return next(error); }
+});
+
+app.get("/api/accounts/:accountId/transactions", requireSession, async (request, response, next) => {
+  const accountId = uuidSchema.safeParse(request.params.accountId);
+  const page = pageSchema.safeParse(request.query);
+  if (!accountId.success || !page.success) {
+    return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Provide a valid account ID, limit (1–100), and offset (0–10000)." } });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT lt.id AS transaction_id, lt.reference, lt.description, lt.currency,
+              lt.status, lt.created_at, lt.posted_at,
+              le.side, le.amount_minor::text AS amount_minor
+       FROM bank_accounts a
+       JOIN ledger_entries le ON le.account_id = a.id
+       JOIN ledger_transactions lt ON lt.id = le.transaction_id
+       WHERE a.id = $1 AND a.owner_user_id = $2 AND lt.status = 'posted'
+       ORDER BY COALESCE(lt.posted_at, lt.created_at) DESC, lt.id DESC
+       LIMIT $3 OFFSET $4`,
+      [accountId.data, request.auth.id, page.data.limit, page.data.offset],
+    );
+    return response.status(200).json({
+      transactions: result.rows.map((row) => ({
+        id: row.transaction_id,
+        reference: row.reference,
+        description: row.description,
+        currency: row.currency,
+        status: row.status,
+        direction: row.side === "credit" ? "incoming" : "outgoing",
+        amountMinor: row.amount_minor,
+        createdAt: row.created_at,
+        postedAt: row.posted_at,
+      })),
+      page: { limit: page.data.limit, offset: page.data.offset },
+    });
+  } catch (error) { return next(error); }
+});
+
+app.get("/api/auth/me", requireSession, (request, response) => {
   response.status(200).json({ user: publicUser(request.auth), csrfToken: request.auth.csrf_token });
 });
 app.post("/api/auth/logout", requireSession, requireCsrf, async (request, response, next) => {
