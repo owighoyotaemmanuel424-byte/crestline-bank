@@ -382,7 +382,7 @@ app.get("/api/accounts", requireSession, async (request, response, next) => {
       `SELECT a.id, a.currency, a.status, a.created_at,
               COALESCE(SUM(CASE WHEN le.side = 'credit' THEN le.amount_minor
                                 WHEN le.side = 'debit' THEN -le.amount_minor
-                                ELSE 0 END), 0)::text AS balance_minor
+                                ELSE 0 END) FILTER (WHERE lt.status = 'posted'), 0)::text AS balance_minor
        FROM bank_accounts a
        LEFT JOIN ledger_entries le ON le.account_id = a.id
        LEFT JOIN ledger_transactions lt ON lt.id = le.transaction_id AND lt.status = 'posted'
