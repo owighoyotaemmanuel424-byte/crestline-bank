@@ -41,6 +41,8 @@ psql "$DATABASE_URL" -f server/db/schema.sql
 - `GET /health/ready` — PostgreSQL connectivity readiness.
 - `POST /api/auth/register` — create a customer login and profile.
 - `POST /api/auth/login` — authenticate with email and password.
+- `GET /api/accounts` — list the signed-in customer's accounts with balances derived from posted ledger entries.
+- `GET /api/accounts/:accountId/transactions?limit=25&offset=0` — list posted transactions for an account owned by the signed-in customer (maximum 100 per page).
 - `GET /api/auth/me` — retrieve the current session's user and CSRF token.
 - `POST /api/auth/logout` — revoke the current session (requires `x-csrf-token`).
 - `POST /api/auth/verify-email` — consume a single-use email verification token.
@@ -67,6 +69,7 @@ For browser requests, use `credentials: "include"`. After registration or login,
 - Express API with security headers, allowlisted CORS, bounded JSON parsing, rate limiting and health checks.
 - PostgreSQL users, customer profiles, opaque authentication sessions, accounts, double-entry journal entries, idempotency keys, append-only audit events and support tickets.
 - Persistent customer registration/login/session lookup/logout endpoints.
+- Customer-scoped, read-only account and posted-ledger transaction endpoints; balances are computed from the journal, not stored as mutable account totals.
 - GitHub Actions workflow for API syntax validation and frontend build.
 
 ## Important safety and production requirements
