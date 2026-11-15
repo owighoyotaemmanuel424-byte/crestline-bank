@@ -62,8 +62,8 @@ async function issueActionToken(userId, purpose) {
 async function sendActionEmail(email, purpose, token) {
   if (!mailer) return false;
   const verify = purpose === "verify_email";
-  const link = new URL(verify ? "/verify-email" : "/reset-password", env.APP_BASE_URL);
-  link.searchParams.set("token", token);
+  const link = new URL("/", env.APP_BASE_URL);
+  link.searchParams.set(verify ? "verifyToken" : "resetToken", token);
   await mailer.sendMail({
     from: env.SMTP_FROM,
     to: email,
