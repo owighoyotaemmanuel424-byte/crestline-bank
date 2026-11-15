@@ -25,6 +25,8 @@ SMTP_PORT=587
 SMTP_USER=your-smtp-user
 SMTP_PASS=your-smtp-password
 SMTP_FROM=security@example.com
+# Generate with: openssl rand -base64 32
+MFA_ENCRYPTION_KEY=base64-encoded-32-byte-key
 ```
 
 Apply the schema to a dedicated development database:
@@ -45,8 +47,13 @@ psql "$DATABASE_URL" -f server/db/schema.sql
 - `POST /api/auth/resend-verification` — send another verification message (requires session and CSRF token).
 - `POST /api/auth/password/forgot` — request a password reset (always returns a generic response).
 - `POST /api/auth/password/reset` — consume a single-use reset token and revoke all sessions.
+- `POST /api/auth/mfa/setup` — create an encrypted TOTP secret (requires session + CSRF).
+- `POST /api/auth/mfa/enable` — enable TOTP after validating a current code (requires session + CSRF).
+- `POST /api/auth/mfa/disable` — disable TOTP after validating a current code (requires session + CSRF).
 
 Configure SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`) and `APP_BASE_URL` to deliver email. Verification links expire after 24 hours; password reset links expire after 30 minutes. Tokens are generated with cryptographic randomness and only SHA-256 digests are stored. Login is blocked until email verification. The reset-request endpoint intentionally returns the same response whether or not an account exists. When SMTP is not configured, email actions are unavailable and the API does not expose tokens in responses.
+
+For TOTP MFA, set `MFA_ENCRYPTION_KEY` to a base64-encoded 32-byte random key (generate one with `openssl rand -base64 32`). MFA secrets are encrypted at rest using AES-256-GCM. Users call the setup endpoint, add the returned `otpauthUrl` to an authenticator app, and confirm via the enable endpoint. Login then requires the six-digit TOTP code. Protect this key with a managed secret store and plan rotation/recovery before production.
 
 Registration and login accept JSON with `email` and `password`. Passwords must be at least 12 characters. The API hashes passwords with Argon2id, stores only a SHA-256 hash of each opaque session token, uses an HttpOnly/SameSite cookie, applies an authentication rate limit, and requires a session-bound CSRF token for logout. In production the cookie is marked Secure; serve the API only over HTTPS.
 
@@ -67,7 +74,7 @@ This is a prototype and API foundation, not a production banking system. Do not 
 
 Before any production use:
 
-- Add verified email flows, MFA/passkeys, session rotation, account recovery, device/session management, and robust credential-stuffing and abuse detection.
+- Add passkeys, session rotation, account recovery controls, device/session management, and robust credential-stuffing and abuse detection.
 - Prefer a dedicated, independently reviewed OIDC/OAuth2 identity provider; review Argon2id parameters and operational key/secrets management.
 - Add CSRF protection to every state-changing cookie-authenticated route and validate trusted origins at the application boundary.
 - Add server-enforced RBAC, step-up authentication, idempotency, security logging, and comprehensive automated integration/security tests.
@@ -76,4 +83,4 @@ Before any production use:
 - Complete KYC/AML, sanctions, privacy, consumer protection, data residency, incident response, monitoring, backup and restore processes with qualified legal/compliance review.
 - Use TLS, managed encryption/key management and a secrets manager. Never commit credentials.
 
-Email verification and MFA are not implemented; new accounts are not KYC-approved. No live banking rails, production identity provider, money movement, PDF export or live chat are connected.
+Email verification, password reset, and TOTP MFA APIs are implemented, but require SMTP and a managed MFA encryption key to operate. New accounts are not KYC-approved. The frontend includes verification, reset and TOTP login flows; account MFA enrollment still requires a signed-in session and the documented API endpoints. No live banking rails, production identity provider, money movement, PDF export or live chat are connected.
