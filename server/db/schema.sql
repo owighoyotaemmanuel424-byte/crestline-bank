@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS app_users (
     CHECK (role IN ('customer', 'support', 'compliance', 'operations', 'admin')),
   email_verified_at TIMESTAMPTZ,
   mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  mfa_secret_enc TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
