@@ -8,6 +8,7 @@ import pg from "pg";
 import argon2 from "argon2";
 import nodemailer from "nodemailer";
 import { createOpaqueToken, digestToken, actionTokenExpiry } from "./auth-tokens.js";
+import { generateTotpSecret, encryptTotpSecret, decryptTotpSecret, verifyTotp, totpUri } from "./mfa.js";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -22,6 +23,7 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().email().optional(),
+  MFA_ENCRYPTION_KEY: z.string().optional(),
 });
 const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
@@ -29,6 +31,8 @@ if (!parsed.success) {
   process.exit(1);
 }
 const env = parsed.data;
+const mfaKey = env.MFA_ENCRYPTION_KEY ? Buffer.from(env.MFA_ENCRYPTION_KEY, "base64") : null;
+if (mfaKey && mfaKey.length !== 32) { console.error("MFA_ENCRYPTION_KEY must be a base64-encoded 32-byte key"); process.exit(1); }
 const { Pool } = pg;
 const pool = new Pool({
   connectionString: env.DATABASE_URL,
@@ -153,7 +157,7 @@ function requireCsrf(request, response, next) {
   return next();
 }
 function publicUser(user) {
-  return { id: user.id, email: user.email, role: user.role, emailVerified: Boolean(user.email_verified_at) };
+  return { id: user.id, email: user.email, role: user.role, emailVerified: Boolean(user.email_verified_at), mfaEnabled: Boolean(user.mfa_enabled) };
 }
 
 app.get("/health/live", (_request, response) => response.status(200).json({ status: "ok", service: "crestline-api" }));
@@ -293,7 +297,47 @@ app.post("/api/auth/password/reset", authLimiter, async (request, response, next
   finally { client.release(); }
 });
 
-app.get("/api/auth/me", requireSession, (request, response) => {
+
+app.post("/api/auth/mfa/setup", requireSession, requireCsrf, async (request, response, next) => {
+  if (!mfaKey) return response.status(503).json({ error: { code: "MFA_NOT_CONFIGURED", message: "The server MFA encryption key is not configured." } });
+  try {
+    const secret = generateTotpSecret();
+    const encrypted = encryptTotpSecret(secret, mfaKey);
+    await pool.query("UPDATE app_users SET mfa_secret_enc = $1 WHERE id = $2", [encrypted, request.auth.id]);
+    return response.status(200).json({ secret, otpauthUrl: totpUri(secret, request.auth.email), message: "Add this account to an authenticator app, then confirm with a current six-digit code. The secret is shown only during setup." });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/mfa/enable", requireSession, requireCsrf, async (request, response, next) => {
+  const code = z.string().regex(/^\d{6}$/).safeParse(request.body?.totp);
+  if (!code.success) return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Enter a six-digit authenticator code." } });
+  if (!mfaKey) return response.status(503).json({ error: { code: "MFA_NOT_CONFIGURED", message: "The server MFA encryption key is not configured." } });
+  try {
+    const result = await pool.query("SELECT mfa_secret_enc FROM app_users WHERE id = $1", [request.auth.id]);
+    if (!result.rows[0]?.mfa_secret_enc) return response.status(409).json({ error: { code: "MFA_SETUP_REQUIRED", message: "Start MFA setup before enabling it." } });
+    const secret = decryptTotpSecret(result.rows[0].mfa_secret_enc, mfaKey);
+    if (!verifyTotp(secret, code.data)) return response.status(400).json({ error: { code: "MFA_INVALID", message: "That authenticator code is not valid." } });
+    await pool.query("UPDATE app_users SET mfa_enabled = TRUE WHERE id = $1", [request.auth.id]);
+    await pool.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.mfa_enabled', 'user', $1::text)", [request.auth.id]);
+    return response.status(200).json({ status: "mfa_enabled" });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/mfa/disable", requireSession, requireCsrf, async (request, response, next) => {
+  const code = z.string().regex(/^\d{6}$/).safeParse(request.body?.totp);
+  if (!code.success) return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Enter a six-digit authenticator code." } });
+  if (!mfaKey) return response.status(503).json({ error: { code: "MFA_NOT_CONFIGURED", message: "The server MFA encryption key is not configured." } });
+  try {
+    const result = await pool.query("SELECT mfa_enabled, mfa_secret_enc FROM app_users WHERE id = $1", [request.auth.id]);
+    if (!result.rows[0]?.mfa_enabled || !result.rows[0]?.mfa_secret_enc) return response.status(409).json({ error: { code: "MFA_NOT_ENABLED", message: "Multi-factor authentication is not enabled." } });
+    const secret = decryptTotpSecret(result.rows[0].mfa_secret_enc, mfaKey);
+    if (!verifyTotp(secret, code.data)) return response.status(400).json({ error: { code: "MFA_INVALID", message: "That authenticator code is not valid." } });
+    await pool.query("UPDATE app_users SET mfa_enabled = FALSE, mfa_secret_enc = NULL WHERE id = $1", [request.auth.id]);
+    await pool.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.mfa_disabled', 'user', $1::text)", [request.auth.id]);
+    return response.status(200).json({ status: "mfa_disabled" });
+  } catch (error) { next(error); }
+});
+\napp.get("/api/auth/me", requireSession, (request, response) => {
   response.status(200).json({ user: publicUser(request.auth), csrfToken: request.auth.csrf_token });
 });
 app.post("/api/auth/logout", requireSession, requireCsrf, async (request, response, next) => {
