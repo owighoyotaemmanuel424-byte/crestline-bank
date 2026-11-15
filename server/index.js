@@ -97,6 +97,7 @@ const credentialsSchema = z.object({
   email: z.string().trim().email().max(254),
   password: z.string().min(12).max(128),
 });
+const loginSchema = credentialsSchema.extend({ totp: z.string().regex(/^\\d{6}$/).optional() });
 const cookieName = "crestline_session";
 const sessionTtlMs = env.SESSION_TTL_HOURS * 60 * 60 * 1000;
 const hashToken = (value) => createHash("sha256").update(value).digest("hex");
@@ -140,7 +141,7 @@ async function requireSession(request, response, next) {
     const token = readCookie(request, cookieName);
     if (!token || token.length > 256) return response.status(401).json({ error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } });
     const result = await pool.query(
-      `SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.role, u.email_verified_at
+      `SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.role, u.email_verified_at, u.mfa_enabled
        FROM auth_sessions s JOIN app_users u ON u.id = s.user_id
        WHERE s.token_hash = $1 AND s.expires_at > now()`,
       [hashToken(token)],
@@ -191,7 +192,12 @@ app.post("/api/auth/register", authLimiter, async (request, response, next) => {
     );
     await client.query("COMMIT");
     const csrfToken = await createSession(user.id, request, response);
-    return response.status(201).json({ user: publicUser(user), csrfToken, notice: "Account created. Email verification is not yet configured; this demo account is not approved for live banking." });
+    let verificationSent = false;
+    if (mailer) {
+      try { const token = await issueActionToken(user.id, "verify_email"); await sendActionEmail(user.email, "verify_email", token); verificationSent = true; }
+      catch (mailError) { console.error("Verification email delivery failed:", mailError.message); }
+    }
+    return response.status(201).json({ user: publicUser(user), csrfToken, notice: verificationSent ? "Account created. Check your email to verify your address." : "Account created, but email delivery is not configured. An administrator must configure SMTP before this account can sign in." });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     return next(error);
@@ -199,16 +205,23 @@ app.post("/api/auth/register", authLimiter, async (request, response, next) => {
 });
 
 app.post("/api/auth/login", authLimiter, async (request, response, next) => {
-  const input = credentialsSchema.safeParse(request.body);
-  if (!input.success) return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Invalid email or password" } });
+  const input = loginSchema.safeParse(request.body);
+  if (!input.success) return response.status(400).json({ error: { code: "INVALID_INPUT", message: "Invalid email, password, or authenticator code" } });
   try {
     const result = await pool.query(
-      "SELECT id, email, password_hash, role, email_verified_at FROM app_users WHERE lower(email) = $1",
+      "SELECT id, email, password_hash, role, email_verified_at, mfa_enabled, mfa_secret_enc FROM app_users WHERE lower(email) = $1",
       [input.data.email.toLowerCase()],
     );
     const user = result.rows[0];
     const valid = user ? await argon2.verify(user.password_hash, input.data.password).catch(() => false) : false;
     if (!valid) return response.status(401).json({ error: { code: "INVALID_CREDENTIALS", message: "Invalid email or password" } });
+    if (!user.email_verified_at) return response.status(403).json({ error: { code: "EMAIL_NOT_VERIFIED", message: "Verify your email address before signing in." } });
+    if (user.mfa_enabled) {
+      if (!input.data.totp || !mfaKey || !user.mfa_secret_enc) return response.status(401).json({ error: { code: "MFA_REQUIRED", message: "Enter your authenticator app code to continue." } });
+      let secret;
+      try { secret = decryptTotpSecret(user.mfa_secret_enc, mfaKey); } catch { return response.status(500).json({ error: { code: "MFA_CONFIGURATION_ERROR", message: "Multi-factor authentication is temporarily unavailable." } }); }
+      if (!verifyTotp(secret, input.data.totp)) return response.status(401).json({ error: { code: "MFA_INVALID", message: "Invalid authenticator code." } });
+    }
     const csrfToken = await createSession(user.id, request, response);
     await pool.query(
       "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.login', 'user', $1::text)",
