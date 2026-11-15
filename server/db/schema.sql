@@ -26,6 +26,21 @@ CREATE TABLE IF NOT EXISTS customer_profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Opaque session tokens are never stored in plaintext. Expired sessions may
+-- be pruned periodically by a scheduled maintenance task.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE RESTRICT,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  csrf_token TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  user_agent TEXT,
+  ip_address INET,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS bank_accounts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE RESTRICT,
@@ -60,9 +75,6 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 CREATE INDEX IF NOT EXISTS ledger_entries_transaction_idx ON ledger_entries(transaction_id);
 CREATE INDEX IF NOT EXISTS ledger_entries_account_created_idx ON ledger_entries(account_id, created_at DESC);
 
--- A posted journal must contain at least two entries and balance by currency.
--- The deferred trigger allows a transaction and all of its entries to be
--- inserted in one database transaction before checking the final journal.
 CREATE OR REPLACE FUNCTION assert_ledger_transaction_balanced()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
@@ -74,26 +86,19 @@ DECLARE
 BEGIN
   target_id := COALESCE(NEW.transaction_id, OLD.transaction_id);
   SELECT status INTO tx_status FROM ledger_transactions WHERE id = target_id;
-  IF tx_status IS NULL OR tx_status <> 'posted' THEN
-    RETURN NULL;
-  END IF;
-
+  IF tx_status IS NULL OR tx_status <> 'posted' THEN RETURN NULL; END IF;
   SELECT
     COALESCE(SUM(amount_minor) FILTER (WHERE side = 'debit'), 0),
     COALESCE(SUM(amount_minor) FILTER (WHERE side = 'credit'), 0),
     COUNT(*)
   INTO debit_total, credit_total, entry_count
-  FROM ledger_entries
-  WHERE transaction_id = target_id;
-
+  FROM ledger_entries WHERE transaction_id = target_id;
   IF entry_count < 2 OR debit_total <> credit_total THEN
-    RAISE EXCEPTION 'Ledger transaction % is not balanced', target_id
-      USING ERRCODE = '23514';
+    RAISE EXCEPTION 'Ledger transaction % is not balanced', target_id USING ERRCODE = '23514';
   END IF;
   RETURN NULL;
 END;
 $$;
-
 DROP TRIGGER IF EXISTS ledger_transaction_balance_check ON ledger_entries;
 CREATE CONSTRAINT TRIGGER ledger_transaction_balance_check
 AFTER INSERT OR UPDATE OR DELETE ON ledger_entries
@@ -102,9 +107,7 @@ FOR EACH ROW EXECUTE FUNCTION assert_ledger_transaction_balanced();
 
 CREATE OR REPLACE FUNCTION prevent_ledger_entry_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  RAISE EXCEPTION 'Ledger entries are append-only; post a reversal instead';
-END;
+BEGIN RAISE EXCEPTION 'Ledger entries are append-only; post a reversal instead'; END;
 $$;
 DROP TRIGGER IF EXISTS ledger_entries_append_only ON ledger_entries;
 CREATE TRIGGER ledger_entries_append_only
@@ -122,12 +125,9 @@ CREATE TABLE IF NOT EXISTS audit_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS audit_events_created_idx ON audit_events(created_at DESC);
-
 CREATE OR REPLACE FUNCTION prevent_audit_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  RAISE EXCEPTION 'Audit events are append-only';
-END;
+BEGIN RAISE EXCEPTION 'Audit events are append-only'; END;
 $$;
 DROP TRIGGER IF EXISTS audit_events_append_only ON audit_events;
 CREATE TRIGGER audit_events_append_only
