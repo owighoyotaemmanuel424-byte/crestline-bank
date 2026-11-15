@@ -1,6 +1,6 @@
 # Crestline Capital
 
-Responsive fintech product prototype built with React, Vite, Recharts and Lucide, with an initial Node.js API and PostgreSQL foundation.
+Responsive fintech product prototype built with React, Vite, Recharts and Lucide, with a Node.js API and PostgreSQL foundation.
 
 **Demo only:** balances, transactions, card settings and money movement in the browser are simulated. This is not a bank, does not hold deposits, and does not initiate real payments or investments.
 
@@ -18,41 +18,50 @@ DATABASE_URL=postgres://crestline:change-me@localhost:5432/crestline_dev
 PORT=4000
 CORS_ORIGINS=http://localhost:5173
 NODE_ENV=development
+SESSION_TTL_HOURS=24
 ```
 
-Apply the initial schema to a dedicated development database:
+Apply the schema to a dedicated development database:
 
 ```bash
 psql "$DATABASE_URL" -f server/db/schema.sql
 ```
 
-API endpoints:
+## API
+
 - `GET /health/live` — process liveness.
 - `GET /health/ready` — PostgreSQL connectivity readiness.
+- `POST /api/auth/register` — create a customer login and profile.
+- `POST /api/auth/login` — authenticate with email and password.
+- `GET /api/auth/me` — retrieve the current session's user and CSRF token.
+- `POST /api/auth/logout` — revoke the current session (requires `x-csrf-token`).
 
-The API intentionally has no customer login, account, transfer, or admin write endpoints yet. Those require a reviewed identity/session design, authorization policies, and ledger posting service; the frontend demo remains simulated.
+Registration and login accept JSON with `email` and `password`. Passwords must be at least 12 characters. The API hashes passwords with Argon2id, stores only a SHA-256 hash of each opaque session token, uses an HttpOnly/SameSite cookie, applies an authentication rate limit, and requires a session-bound CSRF token for logout. In production the cookie is marked Secure; serve the API only over HTTPS.
+
+For browser requests, use `credentials: "include"`. After registration or login, keep the returned `csrfToken` in application memory and send it as `x-csrf-token` on state-changing authenticated requests. The `GET /api/auth/me` response can restore the token after a page reload.
 
 ## Included
 
-- Premium public marketing site, login and sign-up demo screens.
-- Customer dashboard, balance masking, cash-flow chart and savings goal.
-- Transaction search and incoming/outgoing filters.
-- Simulated transfer, bill-pay and add-funds review.
-- Card controls, savings, analytics, statement preview and responsive navigation.
-- Initial Express API with security headers, allowlisted CORS, bounded JSON parsing, API rate limiting and liveness/readiness checks.
-- PostgreSQL foundation for users, customer profiles, accounts, double-entry journal entries, idempotency keys, append-only audit events and support tickets.
+- Premium public marketing site and responsive customer demo dashboard.
+- Simulated balances, transaction search, cash-flow chart, savings goal and card controls.
+- Express API with security headers, allowlisted CORS, bounded JSON parsing, rate limiting and health checks.
+- PostgreSQL users, customer profiles, opaque authentication sessions, accounts, double-entry journal entries, idempotency keys, append-only audit events and support tickets.
+- Persistent customer registration/login/session lookup/logout endpoints.
 - GitHub Actions workflow for API syntax validation and frontend build.
 
 ## Important safety and production requirements
 
-This is a prototype and API foundation, not a production banking system. Do not collect real customer data or deploy it as a live financial service. Before any production use:
+This is a prototype and API foundation, not a production banking system. Do not collect real customer data or deploy it as a live financial service. The authentication endpoints are an initial development foundation and have not undergone independent security review.
 
-- Complete threat modelling and independent security review.
-- Add a dedicated identity provider using OIDC/OAuth2, Argon2id password hashing, MFA, verified email, secure HttpOnly/SameSite cookies, session revocation and CSRF protection.
-- Add a Node.js/TypeScript API with schema validation, server-enforced RBAC, step-up authentication, idempotency, abuse controls and security logging.
+Before any production use:
+
+- Add verified email flows, MFA/passkeys, session rotation, account recovery, device/session management, and robust credential-stuffing and abuse detection.
+- Prefer a dedicated, independently reviewed OIDC/OAuth2 identity provider; review Argon2id parameters and operational key/secrets management.
+- Add CSRF protection to every state-changing cookie-authenticated route and validate trusted origins at the application boundary.
+- Add server-enforced RBAC, step-up authentication, idempotency, security logging, and comprehensive automated integration/security tests.
 - Review and test the ledger posting service, reversal workflow, concurrency controls, reconciliation and database permissions. The schema's deferred balance check is a starting guardrail, not a complete accounting system.
 - Use licensed banking/payment partners, sandbox-first configuration, signed webhooks, replay protection and reconciliation.
-- Add KYC/AML, sanctions, privacy, consumer protection, data residency, incident response, monitoring, backup and restore processes with qualified legal/compliance review.
+- Complete KYC/AML, sanctions, privacy, consumer protection, data residency, incident response, monitoring, backup and restore processes with qualified legal/compliance review.
 - Use TLS, managed encryption/key management and a secrets manager. Never commit credentials.
 
-No live banking rails, production authentication, provider verification, PDF export, persistence or live chat are connected.
+Email verification and MFA are not implemented; new accounts are not KYC-approved. No live banking rails, production identity provider, money movement, PDF export or live chat are connected.
