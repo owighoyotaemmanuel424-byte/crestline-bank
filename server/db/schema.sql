@@ -144,3 +144,20 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+
+-- Single-use, purpose-bound verification and password-reset credentials.
+-- Only SHA-256 hashes are stored; plaintext tokens are emailed once.
+CREATE TABLE IF NOT EXISTS auth_action_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE RESTRICT,
+  purpose TEXT NOT NULL CHECK (purpose IN ('verify_email', 'reset_password')),
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS auth_action_tokens_user_purpose_idx
+  ON auth_action_tokens(user_id, purpose, created_at DESC);
+CREATE INDEX IF NOT EXISTS auth_action_tokens_expiry_idx
+  ON auth_action_tokens(expires_at);
