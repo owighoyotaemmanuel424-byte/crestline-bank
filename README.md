@@ -19,6 +19,12 @@ PORT=4000
 CORS_ORIGINS=http://localhost:5173
 NODE_ENV=development
 SESSION_TTL_HOURS=24
+APP_BASE_URL=http://localhost:5173
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your-smtp-user
+SMTP_PASS=your-smtp-password
+SMTP_FROM=security@example.com
 ```
 
 Apply the schema to a dedicated development database:
@@ -35,6 +41,12 @@ psql "$DATABASE_URL" -f server/db/schema.sql
 - `POST /api/auth/login` — authenticate with email and password.
 - `GET /api/auth/me` — retrieve the current session's user and CSRF token.
 - `POST /api/auth/logout` — revoke the current session (requires `x-csrf-token`).
+- `POST /api/auth/verify-email` — consume a single-use email verification token.
+- `POST /api/auth/resend-verification` — send another verification message (requires session and CSRF token).
+- `POST /api/auth/password/forgot` — request a password reset (always returns a generic response).
+- `POST /api/auth/password/reset` — consume a single-use reset token and revoke all sessions.
+
+Configure SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`) and `APP_BASE_URL` to deliver email. Verification links expire after 24 hours; password reset links expire after 30 minutes. Tokens are generated with cryptographic randomness and only SHA-256 digests are stored. Login is blocked until email verification. The reset-request endpoint intentionally returns the same response whether or not an account exists. When SMTP is not configured, email actions are unavailable and the API does not expose tokens in responses.
 
 Registration and login accept JSON with `email` and `password`. Passwords must be at least 12 characters. The API hashes passwords with Argon2id, stores only a SHA-256 hash of each opaque session token, uses an HttpOnly/SameSite cookie, applies an authentication rate limit, and requires a session-bound CSRF token for logout. In production the cookie is marked Secure; serve the API only over HTTPS.
 
