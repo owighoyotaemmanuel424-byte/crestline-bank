@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS app_users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS mfa_secret_enc TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS app_users_email_lower_uq ON app_users (lower(email));
 
 CREATE TABLE IF NOT EXISTS customer_profiles (
