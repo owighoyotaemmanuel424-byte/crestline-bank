@@ -44,6 +44,7 @@ psql "$DATABASE_URL" -f server/db/schema.sql
 - `GET /api/auth/me` — retrieve the current session's user and CSRF token.
 - `POST /api/auth/logout` — revoke the current session (requires `x-csrf-token`).
 - `POST /api/auth/verify-email` — consume a single-use email verification token.
+- `POST /api/auth/verification/request` — request verification instructions without revealing account existence.
 - `POST /api/auth/resend-verification` — send another verification message (requires session and CSRF token).
 - `POST /api/auth/password/forgot` — request a password reset (always returns a generic response).
 - `POST /api/auth/password/reset` — consume a single-use reset token and revoke all sessions.
