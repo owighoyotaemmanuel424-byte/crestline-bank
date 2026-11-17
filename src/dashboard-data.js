@@ -8,7 +8,7 @@ const currencyDigits = (currency) => new Intl.NumberFormat("en-US", {
 export function formatMinorAmount(amountMinor, currency = "USD", locale = "en-US") {
   if (typeof amountMinor !== "string" && typeof amountMinor !== "number" && typeof amountMinor !== "bigint") return null;
   const raw = String(amountMinor);
-  if (!/^-?\\d+$/.test(raw)) return null;
+  if (!/^-?\d+$/.test(raw)) return null;
   const minor = Number(raw);
   if (!Number.isSafeInteger(minor)) return null;
   try {
