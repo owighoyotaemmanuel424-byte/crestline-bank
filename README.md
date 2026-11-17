@@ -62,10 +62,13 @@ Registration and login accept JSON with `email` and `password`. Passwords must b
 
 For browser requests, use `credentials: "include"`. After registration or login, keep the returned `csrfToken` in application memory and send it as `x-csrf-token` on state-changing authenticated requests. The `GET /api/auth/me` response can restore the token after a page reload.
 
+The customer dashboard requests `GET /api/accounts` with the session cookie and displays balances computed from posted ledger entries. It then requests `GET /api/accounts/:accountId/transactions?limit=25&offset=0` for the selected account; further pages are loaded on demand. API minor-unit amounts are formatted using the selected currency's standard fraction digits. If no API-backed account is available, or the account data cannot be loaded, the dashboard keeps its illustrative demo values visibly labelled as simulated. A `401` response returns the customer to sign-in. These read-only integrations do not initiate money movement.
+
 ## Included
 
 - Premium public marketing site and responsive customer demo dashboard.
-- Simulated balances, transaction search, cash-flow chart, savings goal and card controls.
+- Authenticated customer dashboards load account balances and posted transaction history from the customer-scoped API when an account exists; the fallback balances, cash-flow chart, savings goal and card controls remain clearly labelled demo data.
+- Dashboard transaction search and direction filters operate on loaded ledger rows; transaction history loads 25 records per page and can fetch subsequent pages.
 - Express API with security headers, allowlisted CORS, bounded JSON parsing, rate limiting and health checks.
 - PostgreSQL users, customer profiles, opaque authentication sessions, accounts, double-entry journal entries, idempotency keys, append-only audit events and support tickets.
 - Persistent customer registration/login/session lookup/logout endpoints.
