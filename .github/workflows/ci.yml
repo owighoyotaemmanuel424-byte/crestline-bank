@@ -12,6 +12,22 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: crestline_test
+          POSTGRES_USER: crestline
+          POSTGRES_PASSWORD: crestline_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crestline -d crestline_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://crestline:crestline_test_password@localhost:5432/crestline_test
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -21,9 +37,13 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Apply test database schema
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/schema.sql
       - name: Check API syntax
         run: npm run check:api
-      - name: Run unit tests
+      - name: Run unit and PostgreSQL integration tests
         run: npm test
+        env:
+          RUN_DB_INTEGRATION: "true"
       - name: Build frontend
         run: npm run build
