@@ -118,11 +118,11 @@ function readCookie(request, name) {
 }
 function setSessionCookie(response, token) {
   const secure = env.NODE_ENV === "production" ? "; Secure" : "";
-  response.setHeader("Set-Cookie", `${cookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=${Math.floor(sessionTtlMs / 1000)}${secure}`);
+  response.setHeader("Set-Cookie", `${cookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/api; Max-Age=${Math.floor(sessionTtlMs / 1000)}${secure}`);
 }
 function clearSessionCookie(response) {
   const secure = env.NODE_ENV === "production" ? "; Secure" : "";
-  response.setHeader("Set-Cookie", `${cookieName}=; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=0${secure}`);
+  response.setHeader("Set-Cookie", `${cookieName}=; HttpOnly; SameSite=Lax; Path=/api; Max-Age=0${secure}`);
 }
 async function createSession(userId, request, response) {
   const token = randomBytes(32).toString("base64url");
