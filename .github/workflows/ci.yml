@@ -37,6 +37,10 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Report dependency advisories
+        run: |
+          npm audit --json > /tmp/npm-audit.json || true
+          node -e "const audit = require('/tmp/npm-audit.json'); for (const [name, item] of Object.entries(audit.vulnerabilities || {})) { console.log(name + ': severity=' + item.severity + ', direct=' + item.isDirect + ', range=' + item.range + ', fix=' + JSON.stringify(item.fixAvailable)); for (const advisory of item.via || []) if (typeof advisory === 'object') console.log('  ' + advisory.title + ' ' + advisory.url); }"
       - name: Apply test database schema
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/schema.sql
       - name: Check API syntax
