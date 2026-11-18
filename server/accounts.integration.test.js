@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
@@ -97,13 +97,15 @@ test("authenticated account APIs enforce ownership and return posted ledger page
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      assert.equal(response.status, 200, await response.text());
+      const responseText = await response.text();
+      assert.equal(response.status, 200, responseText);
+      const responseBody = JSON.parse(responseText);
       const setCookie = response.headers.get("set-cookie") || "";
       assert.match(setCookie, /Path=\/api(?:;|$)/, "session cookie must cover authenticated account API routes");
       assert.doesNotMatch(setCookie, /Path=\/api\/auth(?:;|$)/, "session cookie must not be restricted to auth routes");
       return {
         cookie: setCookie.split(";")[0],
-        body: await response.json(),
+        body: responseBody,
       };
     };
 
