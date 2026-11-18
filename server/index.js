@@ -187,7 +187,7 @@ app.post("/api/auth/register", authLimiter, async (request, response, next) => {
     const user = inserted.rows[0];
     await client.query("INSERT INTO customer_profiles (user_id) VALUES ($1)", [user.id]);
     await client.query(
-      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.registered', 'user', $1::text)",
+      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.registered', 'user', ($1::uuid)::text)",
       [user.id],
     );
     await client.query("COMMIT");
@@ -223,7 +223,7 @@ app.post("/api/auth/login", authLimiter, async (request, response, next) => {
     }
     const csrfToken = await createSession(user.id, request, response);
     await pool.query(
-      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.login', 'user', $1::text)",
+      "INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.login', 'user', ($1::uuid)::text)",
       [user.id],
     );
     return response.status(200).json({ user: publicUser(user), csrfToken });
@@ -249,7 +249,7 @@ app.post("/api/auth/verify-email", authLimiter, async (request, response, next) 
     await client.query("UPDATE app_users SET email_verified_at = now(), updated_at = now() WHERE id = $1", [found.rows[0].user_id]);
     await client.query("UPDATE auth_action_tokens SET consumed_at = now() WHERE id = $1", [found.rows[0].id]);
     await client.query("UPDATE auth_sessions SET expires_at = now() WHERE user_id = $1", [found.rows[0].user_id]);
-    await client.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.email_verified', 'user', $1::text)", [found.rows[0].user_id]);
+    await client.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.email_verified', 'user', ($1::uuid)::text)", [found.rows[0].user_id]);
     await client.query("COMMIT");
     clearSessionCookie(response);
     return response.status(200).json({ status: "email_verified", message: "Email verified. You can now sign in." });
@@ -319,7 +319,7 @@ app.post("/api/auth/password/reset", authLimiter, async (request, response, next
     await client.query("UPDATE app_users SET password_hash = $1, updated_at = now() WHERE id = $2", [passwordHash, userId]);
     await client.query("UPDATE auth_action_tokens SET consumed_at = now() WHERE user_id = $1 AND purpose = 'reset_password' AND consumed_at IS NULL", [userId]);
     await client.query("UPDATE auth_sessions SET expires_at = now() WHERE user_id = $1", [userId]);
-    await client.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.password_reset', 'user', $1::text)", [userId]);
+    await client.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.password_reset', 'user', ($1::uuid)::text)", [userId]);
     await client.query("COMMIT");
     clearSessionCookie(response);
     return response.status(200).json({ status: "password_reset", message: "Password updated. Sign in with your new password." });
@@ -348,7 +348,7 @@ app.post("/api/auth/mfa/enable", requireSession, requireCsrf, async (request, re
     const secret = decryptTotpSecret(result.rows[0].mfa_secret_enc, mfaKey);
     if (!verifyTotp(secret, code.data)) return response.status(400).json({ error: { code: "MFA_INVALID", message: "That authenticator code is not valid." } });
     await pool.query("UPDATE app_users SET mfa_enabled = TRUE WHERE id = $1", [request.auth.id]);
-    await pool.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.mfa_enabled', 'user', $1::text)", [request.auth.id]);
+    await pool.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.mfa_enabled', 'user', ($1::uuid)::text)", [request.auth.id]);
     return response.status(200).json({ status: "mfa_enabled" });
   } catch (error) { next(error); }
 });
@@ -363,7 +363,7 @@ app.post("/api/auth/mfa/disable", requireSession, requireCsrf, async (request, r
     const secret = decryptTotpSecret(result.rows[0].mfa_secret_enc, mfaKey);
     if (!verifyTotp(secret, code.data)) return response.status(400).json({ error: { code: "MFA_INVALID", message: "That authenticator code is not valid." } });
     await pool.query("UPDATE app_users SET mfa_enabled = FALSE, mfa_secret_enc = NULL WHERE id = $1", [request.auth.id]);
-    await pool.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.mfa_disabled', 'user', $1::text)", [request.auth.id]);
+    await pool.query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id) VALUES ($1, 'customer.mfa_disabled', 'user', ($1::uuid)::text)", [request.auth.id]);
     return response.status(200).json({ status: "mfa_disabled" });
   } catch (error) { next(error); }
 });
