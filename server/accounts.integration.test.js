@@ -126,6 +126,7 @@ test("authenticated account APIs enforce ownership and return posted ledger page
     assert.equal(firstPage.transactions.length, 25);
     assert.ok(firstPage.transactions.every((item) => item.status === "posted"));
     assert.equal(firstPage.page.offset, 0);
+    assert.equal(firstPage.page.hasMore, true);
 
     const secondPageResponse = await fetch(`${baseUrl}/api/accounts/${accountA}/transactions?limit=25&offset=25`, {
       headers: { cookie: sessionA.cookie },
@@ -134,6 +135,15 @@ test("authenticated account APIs enforce ownership and return posted ledger page
     const secondPage = await secondPageResponse.json();
     assert.equal(secondPage.transactions.length, 1);
     assert.equal(secondPage.page.offset, 25);
+    assert.equal(secondPage.page.hasMore, false);
+
+    const exactPageResponse = await fetch(baseUrl + "/api/accounts/" + accountA + "/transactions?limit=26&offset=0", {
+      headers: { cookie: sessionA.cookie },
+    });
+    assert.equal(exactPageResponse.status, 200);
+    const exactPage = await exactPageResponse.json();
+    assert.equal(exactPage.transactions.length, 26);
+    assert.equal(exactPage.page.hasMore, false, "a full page with no additional rows must not advertise another page");
 
     const foreignAccountResponse = await fetch(`${baseUrl}/api/accounts/${accountB}/transactions`, {
       headers: { cookie: sessionA.cookie },

@@ -420,10 +420,11 @@ app.get("/api/accounts/:accountId/transactions", requireSession, async (request,
        WHERE a.id = $1 AND a.owner_user_id = $2 AND lt.status = 'posted'
        ORDER BY COALESCE(lt.posted_at, lt.created_at) DESC, lt.id DESC
        LIMIT $3 OFFSET $4`,
-      [accountId.data, request.auth.id, page.data.limit, page.data.offset],
+      [accountId.data, request.auth.id, page.data.limit + 1, page.data.offset],
     );
+    const hasMore = result.rows.length > page.data.limit;
     return response.status(200).json({
-      transactions: result.rows.map((row) => ({
+      transactions: result.rows.slice(0, page.data.limit).map((row) => ({
         id: row.transaction_id,
         reference: row.reference,
         description: row.description,
@@ -434,7 +435,7 @@ app.get("/api/accounts/:accountId/transactions", requireSession, async (request,
         createdAt: row.created_at,
         postedAt: row.posted_at,
       })),
-      page: { limit: page.data.limit, offset: page.data.offset },
+      page: { limit: page.data.limit, offset: page.data.offset, hasMore },
     });
   } catch (error) { return next(error); }
 });
