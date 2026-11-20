@@ -156,6 +156,19 @@ test("authenticated account APIs enforce ownership and return posted ledger page
     const secondCustomerBody = await secondCustomerAccounts.json();
     assert.deepEqual(secondCustomerBody.accounts.map((account) => account.id), [accountB]);
 
+    const invalidPage = await fetch(`${baseUrl}/api/accounts/${accountA}/transactions?limit=0`, {
+      headers: { cookie: sessionA.cookie },
+    });
+    assert.equal(invalidPage.status, 400, "invalid pagination limits must be rejected");
+
+    await database.query("UPDATE auth_sessions SET expires_at = now() - interval '1 second' WHERE user_id = $1", [userB]);
+    const expiredAccounts = await fetch(`${baseUrl}/api/accounts`, { headers: { cookie: sessionB.cookie } });
+    assert.equal(expiredAccounts.status, 401, "expired sessions must not read customer accounts");
+    const expiredTransactions = await fetch(`${baseUrl}/api/accounts/${accountB}/transactions`, {
+      headers: { cookie: sessionB.cookie },
+    });
+    assert.equal(expiredTransactions.status, 401, "expired sessions must not read transaction history");
+
     const unauthenticated = await fetch(`${baseUrl}/api/accounts`);
     assert.equal(unauthenticated.status, 401);
 
