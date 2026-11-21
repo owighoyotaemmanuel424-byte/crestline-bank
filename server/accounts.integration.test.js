@@ -49,6 +49,7 @@ test("authenticated account APIs enforce ownership and return posted ledger page
 
     const userA = randomUUID();
     const userB = randomUUID();
+    const userC = randomUUID();
     const accountA = randomUUID();
     const accountB = randomUUID();
     const suffix = randomUUID();
@@ -62,6 +63,10 @@ test("authenticated account APIs enforce ownership and return posted ledger page
     await database.query(
       "INSERT INTO bank_accounts (id, owner_user_id, account_number_token, currency, status) VALUES ($1, $2, $3, 'USD', 'active'), ($4, $5, $6, 'USD', 'active')",
       [accountA, userA, `token-a-${suffix}`, accountB, userB, `token-b-${suffix}`],
+    );
+    await database.query(
+      "INSERT INTO app_users (id, email, password_hash, email_verified_at) VALUES ($1, $2, $3, now())",
+      [userC, `integration-empty-${suffix}@example.test`, passwordHash],
     );
 
     async function addLedgerTransaction(index, { status = "posted", amount = 100 } = {}) {
@@ -111,6 +116,7 @@ test("authenticated account APIs enforce ownership and return posted ledger page
 
     const sessionA = await login(`integration-a-${suffix}@example.test`);
     const sessionB = await login(`integration-b-${suffix}@example.test`);
+    const sessionC = await login(`integration-empty-${suffix}@example.test`);
     const accountResponse = await fetch(`${baseUrl}/api/accounts`, { headers: { cookie: sessionA.cookie } });
     assert.equal(accountResponse.status, 200);
     const accounts = await accountResponse.json();
@@ -155,6 +161,19 @@ test("authenticated account APIs enforce ownership and return posted ledger page
     assert.equal(secondCustomerAccounts.status, 200);
     const secondCustomerBody = await secondCustomerAccounts.json();
     assert.deepEqual(secondCustomerBody.accounts.map((account) => account.id), [accountB]);
+    assert.equal(secondCustomerBody.accounts[0].balanceMinor, "-2600", "debit ledger entries must reduce the account balance and pending entries must be excluded");
+
+    const outgoingTransactions = await fetch(`${baseUrl}/api/accounts/${accountB}/transactions?limit=1`, {
+      headers: { cookie: sessionB.cookie },
+    });
+    assert.equal(outgoingTransactions.status, 200);
+    const outgoingPage = await outgoingTransactions.json();
+    assert.equal(outgoingPage.transactions[0].direction, "outgoing");
+    assert.equal(outgoingPage.transactions[0].amountMinor, "100");
+
+    const emptyCustomerAccounts = await fetch(`${baseUrl}/api/accounts`, { headers: { cookie: sessionC.cookie } });
+    assert.equal(emptyCustomerAccounts.status, 200);
+    assert.deepEqual((await emptyCustomerAccounts.json()).accounts, [], "customers without provisioned accounts receive an empty list");
 
     const invalidPage = await fetch(`${baseUrl}/api/accounts/${accountA}/transactions?limit=0`, {
       headers: { cookie: sessionA.cookie },
